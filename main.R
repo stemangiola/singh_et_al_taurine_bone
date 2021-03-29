@@ -337,20 +337,23 @@ ggsave(
 library(enrichplot)
 
 
+
 counts_gene_rank %>%
-  filter(gs_cat %in% c("H", "C2")) %>%
-  select(gs_cat  , test) %>%
-  mutate(test = map(test, ~ .x %>% arrange(p.adjust) %>% slice(1:100)  )) %>%
-  
+  mutate(test = map(test, ~ .x %>% filter(ID %in% (counts_gene_enrichment %>%
+                                            slice(1:100) %>%
+                                            pull(pathway))))) %>%
   unnest(test) %>%
+
   ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore,size=Count, color=p.adjust )) +
+  geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
   geom_point() +
   facet_grid(~ gs_cat , scales = "free", space = "free") +
   theme_bw() +
   theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   scale_color_distiller( trans = "log10_reverse", palette = "Spectral") +
   #scale_y_discrete(labels = label_func) +
-  ylab(NULL) + ggtitle(title) + 
+  ylab("Enrichment score") + 
+  xlab(NULL) +
   scale_size(range=c(3, 8))
 
 ggsave(
