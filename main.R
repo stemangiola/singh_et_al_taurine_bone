@@ -103,6 +103,7 @@ counts_de =
     omit_contrast_in_colnames=TRUE
   )
 
+
 library(ppcseq)
 
 counts_de_out = 
@@ -362,5 +363,57 @@ ggsave(
   units = c("mm"),
   width = 600 ,
   height = 300,
+  limitsize = FALSE
+)
+
+
+# Volcano plot non robust
+
+counts_de_limma_voom = 
+  counts_scaled %>%
+  test_differential_abundance(
+    ~0+type, 
+    method="limma_voom", 
+    .contrasts = "typeKnock_out-typeWild_type", 
+    omit_contrast_in_colnames=TRUE
+  )
+
+topgenes_symbols <-
+  counts_de_limma_voom %>%
+  as_tibble() %>%
+  nanny::subset(transcript)  %>%
+  filter(adj.P.Val<0.05 & abs(logFC) > 1) %>%
+  arrange(desc(abs(logFC)))  %>%
+  pull(symbol)
+
+counts_de_limma_voom %>%
+  as_tibble() %>%
+  nanny::subset(transcript) %>%
+  
+  # Subset data
+  mutate(significant = adj.P.Val<0.05 & abs(logFC) > 1) %>%
+  mutate(symbol = ifelse(symbol %in% topgenes_symbols, as.character(symbol), "")) %>%
+  
+  # Plot
+  ggplot(aes(x = logFC, y = P.Value, label=symbol)) +
+  geom_vline(xintercept = c(-1, 1), linetype="dashed", color="#8c8c8c") +
+  geom_hline(yintercept = mean(c(1.24E-4, 3.74E-4)), linetype="dashed", color="#8c8c8c") +
+  geom_point(aes(color = significant,  alpha=significant)) +
+  ggrepel::geom_text_repel() +
+  
+  
+  # Custom scales
+  xlab("Log 2 fold change") +
+  theme_bw() +
+  scale_y_continuous(trans = "log10_reverse") +
+  scale_color_manual(values=c("black", "#e11f28")) +
+  scale_size_discrete(range = c(0, 2))
+
+ggsave(
+  "volcano_plot_limma_voom.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183 ,
+  height = 183,
   limitsize = FALSE
 )
