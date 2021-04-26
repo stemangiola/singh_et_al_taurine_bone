@@ -1,0 +1,229 @@
+---
+title: "Report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Preprocessing
+
+```{mapping}
+# module load cutadapt; module load trimgalore; ls *fastq.gz | awk '{split($0,a,"_"); print a[3]}' | uniq | parallel --eta -j1 trim_galore --paired SO_9588_{}_R1.fastq.gz SO_9588_{}_R2.fastq.gz --fastqc > trim_galore.log
+
+# module load STAR/2.7.3a; STAR --runThreadN 15 --runMode genomeGenerate --genomeDir  ~/third_party_sofware/hg38/karyotypic/ --genomeFastaFiles ~/third_party_sofware/hg38/karyotypic/Homo_sapiens_assembly38.fasta --sjdbGTFfile ~/third_party_sofware/hg38/karyotypic/hg38_ucsc.gtf --sjdbOverhang 100
+
+# module load STAR/2.7.3a; for i in $(ls *_val_*fq.gz | rev | cut -c 16- | rev | uniq); do mkdir -p alignment_hg38/$i; cd alignment_hg38/$i; STAR --genomeDir ~/third_party_sofware/hg38/karyotypic/ --readFilesIn ../../$i'_R1_val_1.fq.gz' ../../$i'_R2_val_2.fq.gz' --readFilesCommand zcat --genomeLoad LoadAndKeep --runThreadN 42 --outSAMtype BAM SortedByCoordinate --limitBAMsortRAM 40000000000 --outReadsUnmapped Fastx; cd ../../; done
+```
+
+Import libraries
+
+```{r libraries, message=FALSE, warning=FALSE, echo=FALSE}
+library(tidyverse)
+library(tidySummarizedExperiment)
+library(tidybulk)
+library(tidyHeatmap)
+library(DT)
+```
+
+## Gene counting
+
+```{r counting, eval=FALSE}
+# Counting
+raw_counts =
+  dir(
+    "download.genotypic.co.in/SO_9588_rawdata/alignment_hg38/",
+    recursive = T,
+    full.names = T,
+    pattern = ".bam"
+  ) %>%
+  tidybulk_SAM_BAM(genome = "hg38", isPairedEnd = TRUE)
+
+raw_counts %>% saveRDS("raw_counts.rds", compress = "gzip")
+```
+
+```{r load, echo=FALSE}
+raw_counts = readRDS("raw_counts.rds")
+```
+
+## Data preprocessing
+
+Include filtering, scaling, dimensionality reduction
+
+```{r scaling}
+counts_scaled = 
+  raw_counts %>%
+  
+  # Format
+  mutate(sample_id = sample) %>%
+  extract(sample_id, "sample_id",  regex=".*SO_9588_(.+)/.+") %>%
+  
+  # Add factor of interest
+  inner_join(
+    tibble(
+      sample_id = c("W1", "W2", "W3", "Ko1", "Ko2", "Ko3"),
+      type = c(rep("Wild_type", 3), rep("Knock_out", 3))
+    ),
+    by="sample_id"
+  ) %>%
+  
+  # Filter
+  identify_abundant(factor_of_interest=type) %>%
+  
+  # Scale
+  scale_abundance() %>%
+  
+  # Reduce dimensions
+  reduce_dimensions(method = "PCA")
+```
+
+## Density plot
+
+The libraries are correctly scaled and have quite low depth
+
+```{r density}
+counts_scaled %>%
+  keep_abundant(factor_of_interest=type) %>%
+  ggplot(aes(count_scaled+1, group=sample_id, color=type)) +
+  geom_density() +
+  scale_x_log10() +
+  scale_color_brewer(palette = "Set1") +
+  theme_bw()
+```
+
+## Principal component analysis
+
+The biological groups are quite separated, except for Ko1
+
+
+```{r PCA}
+counts_scaled %>%
+  as_tibble() %>%
+  nanny::subset(sample) %>%
+  ggplot(aes(PC1,PC2, label=sample_id)) +
+  geom_point(aes(color=type)) +
+  ggrepel::geom_text_repel() +
+  scale_color_brewer(palette = "Set1") +
+  theme_bw()
+```
+
+# Heatmap
+
+The most variable genes put Ko1 more similar to wild-type
+
+```{r heatmap}
+counts_scaled %>%
+  keep_variable(.abundance = counts_scaled, top = 500) %>%
+  as_tibble() %>%
+  heatmap(
+    .column = sample_id,
+    .row = symbol,
+    .value = count_scaled,
+    transform = log1p
+  ) %>%
+  add_tile(type) 
+```
+
+
+## Differential gene transcript-abundance
+
+Robust and stringent analyses show a total of `11` genes with a `2-fold` difference between wild-type and knock-out
+
+```{r DE}
+counts_de = 
+  counts_scaled %>%
+  test_differential_abundance(
+    ~0+type, 
+    method="edger_robust_likelihood_ratio", 
+    .contrasts = "typeWild_type-typeKnock_out", 
+    test_above_log2_fold_change = 1,
+    omit_contrast_in_colnames=TRUE
+  )
+
+counts_de %>%
+  as_tibble() %>%
+  nanny::subset(transcript) %>%
+  arrange(FDR) %>%
+  describe_transcript(symbol) %>%
+  dplyr::select(symbol, description, logFC, FDR) %>%
+  DT::datatable()
+```
+
+## Gene transcript-abundance distribution
+
+## Heatmap with significant genes
+
+These genes define the two biological groups as expected
+
+```{r heatmap DE}
+# Heatmap
+counts_de %>%
+  filter(FDR<0.05)%>% #  & abs(logFC) >=2
+  as_tibble() %>%
+  heatmap(
+    .column = sample_id,
+    .row = symbol,
+    .value = count_scaled,
+    transform = log1p
+  ) %>%
+  add_tile(type) 
+```
+
+## Volcano plot
+
+```{r}
+topgenes_symbols <-
+  counts_de %>%
+  as_tibble() %>%
+  nanny::subset(transcript)  %>%
+  filter(FDR<0.05) %>%
+  arrange(desc(abs(logFC)))  %>%
+  head(10) %>%
+  pull(symbol)
+
+counts_de %>%
+  as_tibble() %>%
+  nanny::subset(transcript) %>%
+  
+  # Subset data
+  mutate(significant = FDR<0.05) %>%
+  mutate(symbol = ifelse(symbol %in% topgenes_symbols, as.character(symbol), "")) %>%
+  
+  # Plot
+  ggplot(aes(x = logFC, y = PValue, label=symbol)) +
+  geom_point(aes(color = significant,  alpha=significant)) +
+  ggrepel::geom_text_repel() +
+  
+  # Custom scales
+  theme_bw() +
+  scale_y_continuous(trans = "log10_reverse") +
+  scale_color_manual(values=c("black", "#e11f28")) 
+```
+
+## EGSEA gene enrichment
+
+EGSEA uses many algorithms on many datasets (GSEA, GO, KEGG). The pathways are ranked by the overall gene set that scores well in most algorithms. The web_page column includes the web page where ll information of that gene set are.
+
+Please download from the email the compressed directory, and open index.html with a browser to investigate the results for each pathway in the table below.
+
+```{r EGSEA, eval=FALSE}
+library(EGSEA)
+counts_gene_enrichment = 
+  counts_de %>%
+  test_gene_enrichment(
+    ~0+type, 
+    .entrez=transcript, 
+    .contrasts = "typeWild_type-typeKnock_out",
+    species="human"
+  )
+```
+
+```{r load 2, echo=FALSE}
+counts_gene_enrichment = readRDS("counts_gene_enrichment.rds")
+
+counts_gene_enrichment %>%
+  DT::datatable()
+```
+
+
