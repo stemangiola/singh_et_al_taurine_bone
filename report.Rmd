@@ -25,48 +25,27 @@ library(tidySummarizedExperiment)
 library(tidybulk)
 library(tidyHeatmap)
 library(DT)
+library(patchwork)
 ```
 
-## Gene counting
-
-```{r counting, eval=FALSE}
-# Counting
-raw_counts =
-  dir(
-    "download.genotypic.co.in/SO_9588_rawdata/alignment_hg38/",
-    recursive = T,
-    full.names = T,
-    pattern = ".bam"
-  ) %>%
-  tidybulk_SAM_BAM(genome = "hg38", isPairedEnd = TRUE)
-
-raw_counts %>% saveRDS("raw_counts.rds", compress = "gzip")
-```
-
-```{r load, echo=FALSE}
-raw_counts = readRDS("raw_counts.rds")
-```
-
-## Data preprocessing
+## Gene counting and Data preprocessing
 
 Include filtering, scaling, dimensionality reduction
 
-```{r scaling}
+```{r counting}
 counts_scaled = 
-  raw_counts %>%
-  
-  # Format
-  mutate(sample_id = sample) %>%
-  extract(sample_id, "sample_id",  regex=".*SO_9588_(.+)/.+") %>%
+  read_csv("company_derived_normalised_counts.csv") %>%
+  pivot_longer(cols = -Gene_Name, names_to = "sample", values_to = "count") %>%
   
   # Add factor of interest
   inner_join(
     tibble(
-      sample_id = c("W1", "W2", "W3", "Ko1", "Ko2", "Ko3"),
+      sample = c("W1", "W2", "W3", "Ko1", "Ko2", "Ko3"),
       type = c(rep("Wild_type", 3), rep("Knock_out", 3))
     ),
-    by="sample_id"
+    by="sample"
   ) %>%
+  as_SummarizedExperiment(.sample = sample, .transcript = Gene_Name , .abundance = count) %>%
   
   # Filter
   identify_abundant(factor_of_interest=type) %>%
@@ -78,6 +57,7 @@ counts_scaled =
   reduce_dimensions(method = "PCA")
 ```
 
+
 ## Density plot
 
 The libraries are correctly scaled and have quite low depth
@@ -85,7 +65,7 @@ The libraries are correctly scaled and have quite low depth
 ```{r density}
 counts_scaled %>%
   keep_abundant(factor_of_interest=type) %>%
-  ggplot(aes(count_scaled+1, group=sample_id, color=type)) +
+  ggplot(aes(count_scaled+1, group=sample, color=type)) +
   geom_density() +
   scale_x_log10() +
   scale_color_brewer(palette = "Set1") +
@@ -101,11 +81,20 @@ The biological groups are quite separated, except for Ko1
 counts_scaled %>%
   as_tibble() %>%
   nanny::subset(sample) %>%
-  ggplot(aes(PC1,PC2, label=sample_id)) +
+  ggplot(aes(PC1,PC2, label=sample)) +
   geom_point(aes(color=type)) +
   ggrepel::geom_text_repel() +
   scale_color_brewer(palette = "Set1") +
   theme_bw()
+
+ggsave(
+  "PCA.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183 ,
+  height = 183,
+  limitsize = FALSE
+)
 ```
 
 # Heatmap
@@ -113,22 +102,28 @@ counts_scaled %>%
 The most variable genes put Ko1 more similar to wild-type
 
 ```{r heatmap}
-counts_scaled %>%
+plot_heatmap = 
+  counts_scaled %>%
   keep_variable(.abundance = counts_scaled, top = 500) %>%
   as_tibble() %>%
   heatmap(
-    .column = sample_id,
-    .row = symbol,
+    .column = sample,
+    .row = feature,
     .value = count_scaled,
     transform = log1p
   ) %>%
-  add_tile(type) 
+  add_tile(type, palette  = c("#E41A1C" ,"#377EB8")) 
+
+plot_heatmap
+
+plot_heatmap %>% save_pdf("heatmap_variable_genes.pdf")
+
 ```
 
 
-## Differential gene transcript-abundance
+## Differential gene feature-abundance
 
-Robust and stringent analyses show a total of `11` genes with a `2-fold` difference between wild-type and knock-out
+Robust and stringent analyses show a total of `522` downregulated genes and `468` up-regulated genes with a `2-fold` difference between wild-type and knock-out
 
 ```{r DE}
 counts_de = 
@@ -143,14 +138,16 @@ counts_de =
 
 counts_de %>%
   as_tibble() %>%
-  nanny::subset(transcript) %>%
+  nanny::subset(feature) %>%
   arrange(FDR) %>%
-  describe_transcript(symbol) %>%
-  dplyr::select(symbol, description, logFC, FDR) %>%
+  describe_transcript(feature) %>%
+  dplyr::select(feature, description, logFC, FDR) %>%
   DT::datatable()
 ```
 
-## Gene transcript-abundance distribution
+
+
+## Gene feature-abundance distribution
 
 ## Heatmap with significant genes
 
@@ -158,16 +155,24 @@ These genes define the two biological groups as expected
 
 ```{r heatmap DE}
 # Heatmap
-counts_de %>%
+plot_heatmap_de = 
+  counts_de %>%
   filter(FDR<0.05)%>% #  & abs(logFC) >=2
   as_tibble() %>%
   heatmap(
-    .column = sample_id,
-    .row = symbol,
+    .column = sample,
+    .row = feature,
     .value = count_scaled,
     transform = log1p
   ) %>%
-  add_tile(type) 
+  add_tile(type, palette  = c("#E41A1C" ,"#377EB8")) 
+#%>%
+#   InteractiveComplexHeatmap::ht_shiny()
+
+plot_heatmap_de
+
+plot_heatmap_de %>% save_pdf("heatmap_differential_genes.pdf", width = 183, height = 183, units = "mm")
+
 ```
 
 ## Volcano plot
@@ -176,29 +181,46 @@ counts_de %>%
 topgenes_symbols <-
   counts_de %>%
   as_tibble() %>%
-  nanny::subset(transcript)  %>%
+  nanny::subset(feature)  %>%
   filter(FDR<0.05) %>%
   arrange(desc(abs(logFC)))  %>%
-  head(10) %>%
-  pull(symbol)
+  pull(feature)
 
 counts_de %>%
   as_tibble() %>%
-  nanny::subset(transcript) %>%
+  nanny::subset(feature) %>%
   
   # Subset data
-  mutate(significant = FDR<0.05) %>%
-  mutate(symbol = ifelse(symbol %in% topgenes_symbols, as.character(symbol), "")) %>%
+  mutate(significant = case_when(
+    FDR<0.05 & logFC < 0 ~ "Down-regulated", 
+    FDR<0.05 & logFC > 0 ~ "Up-regulated",
+    TRUE ~ ""
+  )) %>%
+  mutate(feature = ifelse(feature %in% topgenes_symbols, as.character(feature), "")) %>%
   
   # Plot
-  ggplot(aes(x = logFC, y = PValue, label=symbol)) +
+  ggplot(aes(x = logFC, y = PValue, label=feature)) +
+  geom_vline(xintercept = c(-1, 1), linetype="dashed", color="#8c8c8c") +
+  geom_hline(yintercept = mean(c(1.24E-4, 3.74E-4)), linetype="dashed", color="#8c8c8c") +
   geom_point(aes(color = significant,  alpha=significant)) +
   ggrepel::geom_text_repel() +
   
+  
   # Custom scales
+  xlab("Log 2 fold change") +
   theme_bw() +
   scale_y_continuous(trans = "log10_reverse") +
-  scale_color_manual(values=c("black", "#e11f28")) 
+  scale_color_manual(values=c("black", "#1c4966", "#e11f28")) +
+  scale_size_discrete(range = c(0, 2))
+
+ggsave(
+  "volcano_plot.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183 ,
+  height = 183,
+  limitsize = FALSE
+)
 ```
 
 ## EGSEA gene enrichment
@@ -208,22 +230,131 @@ EGSEA uses many algorithms on many datasets (GSEA, GO, KEGG). The pathways are r
 Please download from the email the compressed directory, and open index.html with a browser to investigate the results for each pathway in the table below.
 
 ```{r EGSEA, eval=FALSE}
-library(EGSEA)
-counts_gene_enrichment = 
+
+counts_gene_rank = 
   counts_de %>%
-  test_gene_enrichment(
-    ~0+type, 
-    .entrez=transcript, 
-    .contrasts = "typeWild_type-typeKnock_out",
-    species="human"
+  symbol_to_entrez(feature) %>%
+  filter(PValue   %>% is.na %>% `!`) %>%
+  test_gene_rank(
+    .entrez = entrez,
+    .arrange_desc = logFC ,
+    species="Homo sapiens",
+    gene_collections = c("H", "C2", "C5")
   )
 ```
 
 ```{r load 2, echo=FALSE}
-counts_gene_enrichment = readRDS("counts_gene_enrichment.rds")
+counts_gene_rank = readRDS("counts_gene_rank.rds")
 
-counts_gene_enrichment %>%
+```
+
+Curated aging gene sets, look p.adjust < 0.05
+
+```{r}
+
+aging_sets = 
+  counts_gene_rank %>%
+  filter(gs_cat  == "C2" ) %>%
+  unnest(test) %>%
+  rowid_to_column(var = "GSEA rank") %>%
+  filter(grepl("aging", ID, ignore.case = T)) %>%
+  filter(p.adjust < 0.05) 
+
+aging_sets %>%
+    dplyr::select(-fit) %>%
   DT::datatable()
+
+```
+
+```{r}
+aging_sets %>%
+  mutate(aging = if_else(grepl("UP", ID), "Aging up", "Aging down")) %>%
+  ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, fill=p.adjust, size=Count)) +
+  #ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore,size=Count, color=p.adjust )) +
+  geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
+  geom_point(shape = 21) +
+  facet_grid(~ aging , scales = "free", space = "free") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  scale_fill_distiller( trans = "log10_reverse", palette = "Spectral") +
+  #scale_y_discrete(labels = label_func) +
+  ylab("Enrichment score") + 
+  xlab(NULL) +
+  scale_size(range=c(3, 8))
+
+
+ggsave(
+  "aging_sets_point.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183/2 ,
+  height = 183/2,
+  limitsize = FALSE
+)
+```
+
+
+```{r}
+aging_sets %>% 
+  mutate(plot = pmap(
+    list(fit, ID, idx_for_plotting, p.adjust), 
+    ~ enrichplot::gseaplot2(
+      ..1, 
+      geneSetID = ..3, 
+      title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
+      base_size = 6
+    ) 
+  )) %>%
+  pull(plot)%>%
+  wrap_plots()
+
+ggsave(
+  "aging_sets_trends.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183 ,
+  height = 183,
+  limitsize = FALSE
+)
+```
+
+All curated gene sets, look p.adjust < 0.05
+
+```{r}
+
+counts_gene_rank %>%
+  filter(gs_cat  == "C2" ) %>%
+  dplyr::select(-fit) %>%
+  unnest(test) %>%
+  DT::datatable()
+
+```
+
+All hallmarks, look p.adjust < 0.05
+
+```{r}
+
+counts_gene_rank %>%
+  filter(gs_cat  == "H" ) %>%
+  dplyr::select(-fit) %>%
+  unnest(test) %>%
+  DT::datatable()
+
+```
+
+# Bibliography
+
+```{r}
+
+counts_de %>% get_bibliography() %>%
+  c(counts_gene_rank %>% get_bibliography()) %>%
+  unique()
+```
+
+# Session information
+
+```{r}
+sessionInfo()
 ```
 
 

@@ -239,6 +239,25 @@ counts_gene_rank =
 
 counts_gene_rank %>% saveRDS("counts_gene_rank.rds")
 
+# Top GSEA
+counts_gene_rank %>% 
+  filter(gs_cat == "C5") %>%
+  unnest(test) %>%
+  slice(1:10) %>%
+  mutate(plot = pmap(
+    list(fit, ID, idx_for_plotting, p.adjust), 
+    ~ enrichplot::gseaplot2(
+      ..1, 
+      geneSetID = ..3, 
+      title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
+      base_size = 6
+    ) 
+  )) %>%
+  pull(plot)%>%
+  wrap_plots()
+
+
+
 # Vijay sets
 my_pathways = 
   counts_gene_enrichment %>%
