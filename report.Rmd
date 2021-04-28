@@ -131,7 +131,7 @@ counts_de =
   test_differential_abundance(
     ~0+type, 
     method="edger_robust_likelihood_ratio", 
-    .contrasts = "typeWild_type-typeKnock_out", 
+    .contrasts = "typeKnock_out-typeWild_type", 
     test_above_log2_fold_change = 1,
     omit_contrast_in_colnames=TRUE
   )
