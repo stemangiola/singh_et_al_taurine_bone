@@ -274,7 +274,7 @@ counts_gene_rank %>%
 
 # Plot Vijay list
 
-numeric_list = c(210, 220, 224, 1,                 48,                 69    ,             99,                 48,                 106,                 93,                 7,                 51               ,  46,                 71,                 86,                 367,                 350,                 521,                 549, 179)
+numeric_list = c(210, 220, 224, 1, 48,  69 ,   99,  48, 106,   93, 7,  51 ,  46,71,  86, 367, 350, 521,   549, 179)
 
 p_numeric_list = 
   counts_gene_rank %>%
@@ -310,21 +310,29 @@ counts_gene_rank %>%
   unnest(test) %>%
   mutate(label = if_else(idx_for_plotting %in% numeric_list, ID %>% stringr::str_sub(0, 20), "")) %>%
   filter(p.adjust < 0.05) %>%
+  
+  # Cut
+  arrange(p.adjust) %>%
+  slice(1:100) %>%
   ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, label=label )) +
   geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
   geom_point(aes(size=Count, color=p.adjust)) +
-  ggrepel::geom_text_repel(max.overlaps = 100, size = 2) +
+  #ggrepel::geom_text_repel(max.overlaps = 100, size = 2) +
   facet_grid(~ gs_cat , scales = "free", space = "free") +
   theme_bw() +
-  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + # element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  #theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + # element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   scale_color_distiller( trans = "log10_reverse", palette = "Spectral") +
   #scale_y_discrete(labels = label_func) +
   ylab("Enrichment score") + 
   xlab(NULL) +
-  scale_size(range=c(1, 3)) +
+  scale_size(range=c(0.5, 2)) +
   ggExtra::removeGrid() +
   guides(fill = guide_legend(override.aes = list(size = 1), nrow = 1 ) ) +
-  theme(legend.position = 'bottom', text = element_text(size = 8))
+  theme(
+    legend.position = 'bottom',
+    text = element_text(size = 8), 
+    axis.text.x = element_text(angle=90, vjust=0.5, hjust = 1)
+  )
   
 
 ggsave(
@@ -332,6 +340,6 @@ ggsave(
   useDingbats=FALSE,
   units = c("mm"),
   width = 183 ,
-  height = 100,
+  height = 183,
   limitsize = FALSE
 )
