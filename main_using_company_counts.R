@@ -206,13 +206,13 @@ library(enrichplot)
 
 counts_gene_rank = 
   counts_de %>%
-  symbol_to_entrez(feature) %>%
+  symbol_to_entrez(.feature) %>%
   filter(PValue   %>% is.na %>% `!`) %>%
   test_gene_rank(
     .entrez = entrez,
     .arrange_desc = logFC ,
     species="Homo sapiens",
-    gene_collections = c("H", "C2", "C5")
+    gene_sets = c("H", "C2", "C5")
   )
 
 
@@ -343,3 +343,5 @@ ggsave(
   height = 183,
   limitsize = FALSE
 )
+
+

@@ -65,7 +65,7 @@ The libraries are correctly scaled and have quite low depth
 ```{r density}
 counts_scaled %>%
   keep_abundant(factor_of_interest=type) %>%
-  ggplot(aes(count_scaled+1, group=sample, color=type)) +
+  ggplot(aes(count_scaled+1, group=.sample, color=type)) +
   geom_density() +
   scale_x_log10() +
   scale_color_brewer(palette = "Set1") +
@@ -80,8 +80,8 @@ The biological groups are quite separated, except for Ko1
 ```{r PCA}
 counts_scaled %>%
   as_tibble() %>%
-  nanny::subset(sample) %>%
-  ggplot(aes(PC1,PC2, label=sample)) +
+  nanny::subset(.sample) %>%
+  ggplot(aes(PC1,PC2, label=.sample)) +
   geom_point(aes(color=type)) +
   ggrepel::geom_text_repel() +
   scale_color_brewer(palette = "Set1") +
@@ -107,8 +107,8 @@ plot_heatmap =
   keep_variable(.abundance = counts_scaled, top = 500) %>%
   as_tibble() %>%
   heatmap(
-    .column = sample,
-    .row = feature,
+    .column = .sample,
+    .row = .feature,
     .value = count_scaled,
     transform = log1p
   ) %>%
@@ -135,19 +135,20 @@ counts_de =
     test_above_log2_fold_change = 1,
     omit_contrast_in_colnames=TRUE
   )
+saveRDS(counts_de, "counts_de.rds")
 
 counts_de %>%
   as_tibble() %>%
-  nanny::subset(feature) %>%
+  nanny::subset(.feature) %>%
   arrange(FDR) %>%
-  describe_transcript(feature) %>%
-  dplyr::select(feature, description, logFC, FDR) %>%
+  describe_transcript(.feature) %>%
+  dplyr::select(.feature, description, logFC, FDR) %>%
   DT::datatable()
 ```
 
 
 
-## Gene feature-abundance distribution
+## Gene .feature-abundance distribution
 
 ## Heatmap with significant genes
 
@@ -160,8 +161,8 @@ plot_heatmap_de =
   filter(FDR<0.05)%>% #  & abs(logFC) >=2
   as_tibble() %>%
   heatmap(
-    .column = sample,
-    .row = feature,
+    .column = .sample,
+    .row = .feature,
     .value = count_scaled,
     transform = log1p
   ) %>%
@@ -181,14 +182,14 @@ plot_heatmap_de %>% save_pdf("heatmap_differential_genes.pdf", width = 183, heig
 topgenes_symbols <-
   counts_de %>%
   as_tibble() %>%
-  nanny::subset(feature)  %>%
+  nanny::subset(.feature)  %>%
   filter(FDR<0.05) %>%
   arrange(desc(abs(logFC)))  %>%
-  pull(feature)
+  pull(.feature)
 
 counts_de %>%
   as_tibble() %>%
-  nanny::subset(feature) %>%
+  nanny::subset(.feature) %>%
   
   # Subset data
   mutate(significant = case_when(
@@ -196,10 +197,10 @@ counts_de %>%
     FDR<0.05 & logFC > 0 ~ "Up-regulated",
     TRUE ~ ""
   )) %>%
-  mutate(feature = ifelse(feature %in% topgenes_symbols, as.character(feature), "")) %>%
+  mutate(.feature = ifelse(.feature %in% topgenes_symbols, as.character(.feature), "")) %>%
   
   # Plot
-  ggplot(aes(x = logFC, y = PValue, label=feature)) +
+  ggplot(aes(x = logFC, y = PValue, label=.feature)) +
   geom_vline(xintercept = c(-1, 1), linetype="dashed", color="#8c8c8c") +
   geom_hline(yintercept = mean(c(1.24E-4, 3.74E-4)), linetype="dashed", color="#8c8c8c") +
   geom_point(aes(color = significant,  alpha=significant)) +
@@ -233,13 +234,13 @@ Please download from the email the compressed directory, and open index.html wit
 
 counts_gene_rank = 
   counts_de %>%
-  symbol_to_entrez(feature) %>%
+  symbol_to_entrez(.feature) %>%
   filter(PValue   %>% is.na %>% `!`) %>%
   test_gene_rank(
     .entrez = entrez,
     .arrange_desc = logFC ,
     species="Homo sapiens",
-    gene_collections = c("H", "C2", "C5")
+    gene_sets = c("H", "C2", "C5")
   )
 ```
 
@@ -342,11 +343,103 @@ counts_gene_rank %>%
 
 ```
 
+
+Overall aging signature
+
+```{r}
+C2_genes = 
+  aging_sets %>% 
+  select(ID, core_enrichment) %>% 
+  filter(grepl("UP", ID)) %>% 
+  separate_rows(core_enrichment, sep="/") %>%
+  left_join(
+     counts_de %>%
+      symbol_to_entrez(.feature) %>% 
+       select(.feature, entrez),
+     by = c("core_enrichment" = "entrez")
+  ) %>% 
+  select(.feature, data_base = ID) %>% 
+  distinct()
+
+
+vijay_genes = 
+  read_csv("combined_age_gene_signature.csv") %>% 
+  select(.feature = X1, data_base) %>% 
+  distinct()
+
+aging_genes = 
+  C2_genes %>% bind_rows(vijay_genes)
+
+aging_rank = 
+  counts_de %>%
+       symbol_to_entrez(.feature) %>%
+         filter(PValue   %>% is.na %>% `!`) %>%
+  test_gene_rank(
+    .entrez = entrez,
+    .arrange_desc = logFC ,
+    species="Homo sapiens",
+    gene_sets = list(
+      aging_signature = 
+        (counts_de %>%
+         filter(.feature %in% aging_genes$.feature) %>% 
+         symbol_to_entrez(.feature) %>% 
+        pull(entrez) %>% 
+        as.integer())
+    )
+  )
+```
+
+Plot Heatmap
+```{r}
+#Heatmap
+aging_heatmap = 
+  counts_de %>% 
+  inner_join(aging_genes) %>% 
+  mutate(data_base = tolower(data_base) ) %>% 
+  unite(".feature", c(.feature, data_base), remove = F) %>% 
+  group_by( data_base) %>% 
+   heatmap(
+    .column = .sample,
+    .row = .feature,
+    .value = count_scaled,
+    transform = log1p,
+    palette_value = circlize::colorRamp2(
+            seq(-2, 2, length.out = 11), 
+            RColorBrewer::brewer.pal(11, "RdBu")
+        )
+  ) %>% 
+  add_tile(type)
+
+
+aging_heatmap
+```
+
+Plot GSEA 
+```{r}
+
+plot_aging_rank =
+  aging_rank%>% 
+  unnest(test) %>% 
+  mutate(plot = pmap(
+     list(fit, ID, idx_for_plotting, p.adjust), 
+     ~ enrichplot::gseaplot2(
+         ..1, 
+         geneSetID = ..3, 
+         title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
+         base_size = 6
+     ) 
+ )) %>%
+     pull(plot) %>% 
+  .[[1]]
+
+plot_aging_rank
+```
+
 # Bibliography
 
 ```{r}
 
-counts_de %>% get_bibliography() %>%
+counts_gene_rank %>% get_bibliography() %>%
   c(counts_gene_rank %>% get_bibliography()) %>%
   unique()
 ```
