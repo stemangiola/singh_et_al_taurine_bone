@@ -26,6 +26,8 @@ library(tidybulk)
 library(tidyHeatmap)
 library(DT)
 library(patchwork)
+
+axis_text_theme = theme(axis.text = element_text(size = 6, margin = margin(0,0,0,0, "cm"), lineheight = 0), axis.title = element_text(size = 7, margin = margin(0,0,0,0, "cm"), lineheight = 0)) 
 ```
 
 ## Gene counting and Data preprocessing
@@ -78,16 +80,19 @@ The biological groups are quite separated, except for Ko1
 
 
 ```{r PCA}
-counts_scaled %>%
+plot_pca = 
+  counts_scaled %>%
   as_tibble() %>%
   nanny::subset(.sample) %>%
   ggplot(aes(PC1,PC2, label=.sample)) +
-  geom_point(aes(color=type)) +
-  ggrepel::geom_text_repel() +
+  geom_point(aes(color=type), size = 0.5) +
+  ggrepel::geom_text_repel(size = 3) +
   scale_color_brewer(palette = "Set1") +
-  theme_bw()
+  theme_bw() +
+  axis_text_theme
 
 ggsave(
+  plot = plot_pca,
   "PCA.pdf",
   useDingbats=FALSE,
   units = c("mm"),
@@ -146,6 +151,41 @@ counts_de %>%
   DT::datatable()
 ```
 
+Checking for outliers. None found
+
+```{r}
+
+library(ppcseq)
+
+counts_de_out = 
+  counts_de %>%
+  mutate(type = case_when(
+    type == "Wild_type" ~ "1_Wild_type",
+    type == "Knock_out" ~ "2_Knock_out"
+  )) %>%
+  as_tibble() %>%
+  mutate(check = FDR  < 0.05) %>%
+  filter(FDR %>% is.na %>% `!`) %>%
+  mutate(count_scaled = as.integer(count_scaled)) %>%
+  identify_outliers(
+    ~type, 
+    .sample, 
+    .feature , 
+    count_scaled, 
+    .significance =PValue , 
+    .do_check = check, 
+    approximate_posterior_inference = FALSE
+  )
+
+counts_de_out %>% 
+  filter(`tot deleterious outliers` > 0) %>%
+  ppcseq::plot_credible_intervals() %>% 
+  left_join(counts_de %>% distinct(.feature)) %>%
+  mutate(plot = map2(plot, .feature, ~ .x + ggtitle(.y))) %>%
+  pull(plot) %>%
+  wrap_plots()
+```
+
 
 
 ## Gene .feature-abundance distribution
@@ -187,34 +227,45 @@ topgenes_symbols <-
   arrange(desc(abs(logFC)))  %>%
   pull(.feature)
 
-counts_de %>%
-  as_tibble() %>%
-  nanny::subset(.feature) %>%
+plot_volcano = 
+ counts_de %>%
+    as_tibble() %>%
+    nanny::subset(.feature) %>%
+    
+    # Subset data
+    mutate(significant = case_when(
+        FDR<0.05 & logFC < 0 ~ "Down-regulated", 
+        FDR<0.05 & logFC > 0 ~ "Up-regulated",
+        TRUE ~ ""
+    )) %>%
+    mutate(.feature = ifelse(.feature %in% topgenes_symbols, as.character(.feature), "")) %>%
+    
+    # Subsample non significant
+    nest(data = -significant) %>% 
+    mutate(data, map2(data, significant, ~ .x %>% when(.y != "", ~ (.), ~ sample_n(., 200)))) %>% 
+    unnest(data) %>% 
+    
+    # CAP pvalue
+    mutate(PValue = if_else(PValue<1e-50, 1e-50, PValue)) %>% 
   
-  # Subset data
-  mutate(significant = case_when(
-    FDR<0.05 & logFC < 0 ~ "Down-regulated", 
-    FDR<0.05 & logFC > 0 ~ "Up-regulated",
-    TRUE ~ ""
-  )) %>%
-  mutate(.feature = ifelse(.feature %in% topgenes_symbols, as.character(.feature), "")) %>%
-  
-  # Plot
-  ggplot(aes(x = logFC, y = PValue, label=.feature)) +
-  geom_vline(xintercept = c(-1, 1), linetype="dashed", color="#8c8c8c") +
-  geom_hline(yintercept = mean(c(1.24E-4, 3.74E-4)), linetype="dashed", color="#8c8c8c") +
-  geom_point(aes(color = significant,  alpha=significant)) +
-  ggrepel::geom_text_repel() +
-  
-  
-  # Custom scales
-  xlab("Log 2 fold change") +
-  theme_bw() +
-  scale_y_continuous(trans = "log10_reverse") +
-  scale_color_manual(values=c("black", "#1c4966", "#e11f28")) +
-  scale_size_discrete(range = c(0, 2))
+    # Plot
+    ggplot(aes(x = logFC, y = PValue, label=.feature)) +
+    geom_vline(xintercept = c(-1, 1), linetype="dashed", color="#8c8c8c") +
+    geom_hline(yintercept = mean(c(1.24E-4, 3.74E-4)), linetype="dashed", color="#8c8c8c") +
+    geom_point(aes(color = significant,  alpha=significant), size=0.1) +
+    ggrepel::geom_text_repel(size = 2) +
+    
+    
+    # Custom scales
+    xlab("Log 2 fold change") +
+    theme_bw() +
+    scale_y_continuous(trans = "log10_reverse") +
+    scale_color_manual(values=c("black", "#1c4966", "#e11f28")) +
+    scale_size_discrete(range = c(0, 2))  +
+    axis_text_theme
 
 ggsave(
+  plot =plot_volcano,
   "volcano_plot.pdf",
   useDingbats=FALSE,
   units = c("mm"),
@@ -249,6 +300,44 @@ counts_gene_rank = readRDS("counts_gene_rank.rds")
 
 ```
 
+Overall bubble plot 
+
+```{r}
+numeric_list = c(210, 220, 224, 1, 48,  69 ,   99,  48, 106,   93, 7,  51 ,  46,71,  86, 367, 350, 521,   549, 179)
+
+overall_buble_plot = 
+  counts_gene_rank %>%
+  filter(gs_cat == "C2") %>%
+  unnest(test) %>%
+  mutate(label = if_else(idx_for_plotting %in% numeric_list, ID %>% stringr::str_sub(0, 20), "")) %>%
+  filter(p.adjust < 0.05) %>%
+  
+  # Cut
+  arrange(p.adjust) %>%
+  slice(1:100) %>%
+  mutate(ID = stringr::str_sub(ID, 1, 30)) %>% 
+  ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, label=label )) +
+  #geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
+  geom_point(aes(size=Count, color=p.adjust)) +
+  #ggrepel::geom_text_repel(max.overlaps = 100, size = 2) +
+  facet_grid(enrichmentScore<0~ . , scales = "free", space = "free") +
+  theme_bw() +
+  #theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + # element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  scale_color_distiller( trans = "log10_reverse", palette = "Spectral") +
+  #scale_y_discrete(labels = label_func) +
+  ylab("Enrichment score") + 
+  xlab(NULL) +
+  scale_size(range=c(0.2, 0.6)) +
+  ggExtra::removeGrid() +
+  guides(fill = guide_legend(override.aes = list(size = 1), nrow = 1 ) ) +
+  theme(
+    legend.position = 'bottom',
+    text = element_text(size = 8), 
+    axis.text.x = element_text(angle=40, vjust=1, hjust = 1, size = 2)
+  )  +
+    axis_text_theme
+```
+
 Curated aging gene sets, look p.adjust < 0.05
 
 ```{r}
@@ -267,8 +356,12 @@ aging_sets %>%
 
 ```
 
+
+
+
 ```{r}
-aging_sets %>%
+plot_aging_bubble = 
+  aging_sets %>%
   mutate(aging = if_else(grepl("UP", ID), "Aging up", "Aging down")) %>%
   ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, fill=p.adjust, size=Count)) +
   #ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore,size=Count, color=p.adjust )) +
@@ -276,15 +369,16 @@ aging_sets %>%
   geom_point(shape = 21) +
   facet_grid(~ aging , scales = "free", space = "free") +
   theme_bw() +
-  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 15,  vjust=1, hjust = 1, size = 4)) +
   scale_fill_distiller( trans = "log10_reverse", palette = "Spectral") +
   #scale_y_discrete(labels = label_func) +
   ylab("Enrichment score") + 
   xlab(NULL) +
-  scale_size(range=c(3, 8))
+  scale_size(range=c(0.5,2)) +
+    axis_text_theme
 
 
-ggsave(
+ggsave(plot = plot_aging_bubble,
   "aging_sets_point.pdf",
   useDingbats=FALSE,
   units = c("mm"),
@@ -296,7 +390,22 @@ ggsave(
 
 
 ```{r}
-aging_sets %>% 
+
+aging_sets_vijay = 
+  counts_gene_rank %>%
+  filter(gs_cat  == "C2" ) %>%
+  unnest(test) %>%
+  rowid_to_column(var = "GSEA rank") %>%
+  filter(tolower(ID) %in% (
+    tolower(c("Lee_Aging_Cerebellum_UP", "LY_AGING_MIDDLE_DN",
+              "MORI_IMMATURE_B_LYMPHOCYTE_UP" , "WONG_EMBRYONIC_STEM_CELL_CORE",
+              "BIDUS_METASTASIS_UP" #, "DEMAGALHAES_AGING_UP"#, "RODWELL_AGING_KIDNEY_UP"
+            ))
+  )) %>%
+  filter(p.adjust < 0.05) 
+
+
+aging_sets_vijay %>% 
   mutate(plot = pmap(
     list(fit, ID, idx_for_plotting, p.adjust), 
     ~ enrichplot::gseaplot2(
@@ -304,9 +413,10 @@ aging_sets %>%
       geneSetID = ..3, 
       title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
       base_size = 6
-    ) 
+    )  +
+    axis_text_theme
   )) %>%
-  pull(plot)%>%
+  pull(plot) %>%
   wrap_plots()
 
 ggsave(
@@ -387,6 +497,8 @@ aging_rank =
         as.integer())
     )
   )
+
+
 ```
 
 Plot Heatmap
@@ -399,19 +511,22 @@ aging_heatmap =
   unite(".feature", c(.feature, data_base), remove = F) %>% 
   group_by( data_base) %>% 
    heatmap(
-    .column = .sample,
-    .row = .feature,
+    .column = .feature,
+    .row = .sample,
     .value = count_scaled,
     transform = log1p,
     palette_value = circlize::colorRamp2(
             seq(-2, 2, length.out = 11), 
             RColorBrewer::brewer.pal(11, "RdBu")
-        )
+        ), 
+    .scale="column"
   ) %>% 
   add_tile(type)
 
 
 aging_heatmap
+
+aging_heatmap %>% save_pdf(filename = "whole_aging_genes.pdf", width = (183 / 6 * 4) * 2, height =( 140/4) * 2, units = "mm")
 ```
 
 Plot GSEA 
@@ -426,8 +541,9 @@ plot_aging_rank =
          ..1, 
          geneSetID = ..3, 
          title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
-         base_size = 6
-     ) 
+         base_size = 6, rel_heights = c(1.5, 0.5), subplots = c(1, 2)
+     )  +
+    axis_text_theme
  )) %>%
      pull(plot) %>% 
   .[[1]]
@@ -435,12 +551,76 @@ plot_aging_rank =
 plot_aging_rank
 ```
 
+## Taurine levels
+
+```{r}
+lm(Taurine~age, data = read_csv("taurine_level.csv") %>% mutate(age = log(`age (M)`))) %>% summary
+
+taurine_plot = 
+  read_csv("taurine_level.csv") %>% 
+  ggplot(aes(`age (M)`, Taurine )) +
+  geom_smooth(method="lm", colour="#3A3B3C", size = 1) +
+  geom_point(size=0.5) +
+  annotate("text", label="P-value 3.05e-09\nSlope -24.7", x = 5, y = 50, size = 2) +
+  scale_y_log10() +
+  theme_bw() +
+    axis_text_theme
+```
+
+# Overall plot
+```{r}
+# All GSEA
+all_gsea = 
+  list(plot_aging_rank) %>% 
+  c(
+    aging_sets_vijay %>% 
+      mutate(plot = pmap(
+    list(fit, ID, idx_for_plotting, p.adjust), 
+    ~ enrichplot::gseaplot2(
+      ..1, 
+      geneSetID = ..3, 
+      title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
+      base_size = 5, rel_heights = c(1.5, 0.5), subplots = c(1, 2)
+    ) + theme(axis.title.y = element_blank())
+  )) %>%
+  pull(plot)
+  ) %>%
+  wrap_plots()
+  
+
+p =(
+  (taurine_plot + plot_pca + plot_volcano + plot_aging_bubble + plot_layout(nrow = 1, widths = c(1, 1, 2, 2)) ) /
+    overall_buble_plot /
+     grid::textGrob('Aging heatmap') /
+       ( all_gsea +  plot_layout(nrow = 1) ) /
+   grid::textGrob('Experimental') 
+)    +
+  # Style
+  #plot_layout(heights = c(1, 3)) 
+  plot_layout( guides = "collect") + 
+  plot_annotation(tag_levels = 'A') & 
+  theme(legend.position = 'bottom', plot.margin = margin(0, 0, 0, 0, "pt"))
+
+
+ggsave(
+  "intergated_plot.pdf",
+  useDingbats=FALSE,
+  units = c("mm"),
+  width = 183 ,
+  height = 150,
+  limitsize = FALSE
+)
+
+
+```
+
+
 # Bibliography
 
 ```{r}
 
 counts_gene_rank %>% get_bibliography() %>%
-  c(counts_gene_rank %>% get_bibliography()) %>%
+  c(counts_de %>% get_bibliography()) %>%
   unique()
 ```
 

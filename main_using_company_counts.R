@@ -305,7 +305,8 @@ ggsave(
 
 # Overall enrichment
 
-counts_gene_rank %>%
+overall_buble_plot = 
+  counts_gene_rank %>%
   filter(gs_cat == "C2") %>%
   unnest(test) %>%
   mutate(label = if_else(idx_for_plotting %in% numeric_list, ID %>% stringr::str_sub(0, 20), "")) %>%
@@ -315,10 +316,10 @@ counts_gene_rank %>%
   arrange(p.adjust) %>%
   slice(1:100) %>%
   ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, label=label )) +
-  geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
+  #geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
   geom_point(aes(size=Count, color=p.adjust)) +
   #ggrepel::geom_text_repel(max.overlaps = 100, size = 2) +
-  facet_grid(~ gs_cat , scales = "free", space = "free") +
+  facet_grid(enrichmentScore<0~ gs_cat , scales = "free", space = "free") +
   theme_bw() +
   #theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) + # element_text(angle = 90, hjust = 1, vjust = 0.5)) +
   scale_color_distiller( trans = "log10_reverse", palette = "Spectral") +
