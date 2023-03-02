@@ -1,4 +1,3 @@
-setwd("/stornext/Bioinf/data/bioinf-data/Papenfuss_lab/projects/mangiola.s/third_party_analyses/bhupinder_bone")
 
 library(tidyverse)
 library(tidySummarizedExperiment)
@@ -235,9 +234,27 @@ counts_gene_rank %>%
   pull(plot)%>%
   wrap_plots()
 
+# Save top 100 by enrichmentScore for Vijay to analyse
+counts_gene_rank %>%
+  filter(gs_cat  == "C2" ) %>%
+  dplyr::select(-fit) %>%
+  unnest(test) %>%
+  filter(p.adjust<0.05) |> 
+  arrange(enrichmentScore |> abs() |> desc()) |> 
+  slice(1:100) |> 
+  write_csv("EGSEA_top_100_ordered_by_enrichmentScore.csv")
 
+# Save top 100 by adjusted p-value for Vijay to analyse
+counts_gene_rank %>%
+  filter(gs_cat  == "C2" ) %>%
+  dplyr::select(-fit) %>%
+  unnest(test) %>%
+  filter(p.adjust<0.05) |> 
+  arrange(p.adjust) |> 
+  slice(1:100) |> 
+  write_csv("EGSEA_top_100_ordered_by_adjusted_p_value.csv")
 
-library(EGSEA)
+Toplibrary(EGSEA)
 counts_gene_enrichment = 
   counts_de %>%
   symbol_to_entrez(feature) %>%
