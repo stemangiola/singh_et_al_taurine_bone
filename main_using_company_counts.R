@@ -7,8 +7,8 @@ library(patchwork)
 library(future)
 
 counts_scaled = 
-  read_csv("company_derived_normalised_counts.csv") %>%
-  pivot_longer(cols = -Gene_Name, names_to = "sample_id", values_to = "count") %>%
+  read_csv("company_derived_normalised_counts.csv") |>
+  pivot_longer(cols = -Gene_Name, names_to = "sample_id", values_to = "count") |>
   
   # Add factor of interest
   inner_join(
@@ -17,15 +17,15 @@ counts_scaled =
       type = c(rep("Wild_type", 3), rep("Knock_out", 3))
     ),
     by="sample_id"
-  ) %>%
-  as_SummarizedExperiment(.sample = sample_id, .transcript = Gene_Name , .abundance = count) %>%
-  identify_abundant(factor_of_interest=type) %>%
-  scale_abundance() %>%
+  ) |>
+  as_SummarizedExperiment(.sample = sample_id, .transcript = Gene_Name , .abundance = count) |>
+  identify_abundant(factor_of_interest=type) |>
+  scale_abundance() |>
   reduce_dimensions(method = "PCA")
 
 # Density plot
-counts_scaled %>%
-  keep_abundant(factor_of_interest=type) %>%
+counts_scaled |>
+  keep_abundant(factor_of_interest=type) |>
   ggplot(aes(count_scaled+1, group=sample, color=type)) +
   geom_density() +
   scale_x_log10() +
@@ -33,9 +33,9 @@ counts_scaled %>%
   theme_bw()
 
 plot_pca = 
-  counts_scaled %>%
-  as_tibble() %>%
-  nanny::subset(sample) %>%
+  counts_scaled |>
+  as_tibble() |>
+  nanny::subset(sample) |>
   ggplot(aes(PC1,PC2, label=sample)) +
   geom_point(aes(color=type)) +
   ggrepel::geom_text_repel() +
@@ -52,23 +52,23 @@ ggsave(
 )
 
 plot_heatmap = 
-  counts_scaled %>%
-  keep_variable(.abundance = counts_scaled, top = 500) %>%
-  as_tibble() %>%
+  counts_scaled |>
+  keep_variable(.abundance = counts_scaled, top = 500) |>
+  as_tibble() |>
   heatmap(
     .column = sample,
     .row = feature,
     .value = count_scaled,
     transform = log1p,
     palette_value = circlize::colorRamp2(c(-2, -1, 0, 1, 2), RColorBrewer::brewer.pal(5,"RdBu")) 
-  ) %>%
+  ) |>
   add_tile(type) 
 
 
-plot_heatmap %>% save_pdf("heatmap_variable_genes.pdf")
+plot_heatmap |> save_pdf("heatmap_variable_genes.pdf")
 
 counts_de = 
-  counts_scaled %>%
+  counts_scaled |>
   test_differential_abundance(
     ~0+type, 
     method="edger_robust_likelihood_ratio", 
@@ -81,15 +81,15 @@ counts_de =
 library(ppcseq)
 
 counts_de_out = 
-  counts_de %>%
+  counts_de |>
   mutate(type = case_when(
     type == "Wild_type" ~ "1_Wild_type",
     type == "Knock_out" ~ "2_Knock_out"
-  )) %>%
-  as_tibble() %>%
-  mutate(check = FDR  < 0.05) %>%
-  filter(FDR %>% is.na %>% `!`) %>%
-  mutate(count_scaled = as.integer(count_scaled)) %>%
+  )) |>
+  as_tibble() |>
+  mutate(check = FDR  < 0.05) |>
+  filter(!is.na(FDR)) |>
+  mutate(count_scaled = as.integer(count_scaled)) |>
   identify_outliers(
     ~type, 
     sample, 
@@ -100,14 +100,14 @@ counts_de_out =
     approximate_posterior_inference = FALSE
   )
 
-counts_de_out %>% saveRDS("counts_de_out.rds")
+counts_de_out |> saveRDS("counts_de_out.rds")
 
-counts_de_out %>% 
-  filter(`tot deleterious outliers` > 0) %>%
-  ppcseq::plot_credible_intervals() %>% 
-  left_join(counts_de %>% distinct(feature)) %>%
-  mutate(plot = map2(plot, feature, ~ .x + ggtitle(.y))) %>%
-  pull(plot) %>%
+counts_de_out |> 
+  filter(`tot deleterious outliers` > 0) |>
+  ppcseq::plot_credible_intervals() |> 
+  left_join(counts_de |> distinct(feature)) |>
+  mutate(plot = map2(plot, feature, ~ .x + ggtitle(.y))) |>
+  pull(plot) |>
   wrap_plots()
 
 ggsave(
@@ -120,8 +120,8 @@ ggsave(
 )
 
 # DE plotting
-counts_de %>%
-  filter(FDR < 0.05) %>%
+counts_de |>
+  filter(FDR < 0.05) |>
   tidySummarizedExperiment::count(logFC > 0)
 
 # A tibble: 2 x 2
@@ -130,48 +130,48 @@ counts_de %>%
 # FALSE         522
 # TRUE          468
 
-counts_de %>%
-  as_tibble() %>%
-  nanny::subset(feature) %>%
-  arrange(PValue) %>%
-  describe_transcript(feature) %>%
-  dplyr::select(feature, description, logFC, FDR) %>%
+counts_de |>
+  as_tibble() |>
+  nanny::subset(feature) |>
+  arrange(PValue) |>
+  describe_transcript(feature) |>
+  dplyr::select(feature, description, logFC, FDR) |>
   write_csv("differentially_abundant_gene_features_wild_minus_ko.csv")
 
 # Heatmap
 plot_heatmap_de = 
-  counts_de %>%
-  filter(FDR<0.05)%>% #  & abs(logFC) >=2
-  as_tibble() %>%
+  counts_de |>
+  filter(FDR<0.05)|> #  & abs(logFC) >=2
+  as_tibble() |>
   heatmap(
     .column = sample,
     .row = feature,
     .value = count_scaled,
     transform = log1p
-  ) %>%
+  ) |>
   add_tile(type) 
 
-plot_heatmap_de %>% save_pdf("heatmap_differential_genes.pdf", width = 183, height = 183, units = "mm")
+plot_heatmap_de |> save_pdf("heatmap_differential_genes.pdf", width = 183, height = 183, units = "mm")
 
 topgenes_symbols <-
-  counts_de %>%
-  as_tibble() %>%
-  nanny::subset(feature)  %>%
-  filter(FDR<0.05) %>%
-  arrange(desc(abs(logFC)))  %>%
+  counts_de |>
+  as_tibble() |>
+  nanny::subset(feature)  |>
+  filter(FDR<0.05) |>
+  arrange(desc(abs(logFC)))  |>
   pull(feature)
 
-counts_de %>%
-  as_tibble() %>%
-  nanny::subset(feature) %>%
+counts_de |>
+  as_tibble() |>
+  nanny::subset(feature) |>
   
   # Subset data
   mutate(significant = case_when(
     FDR<0.05 & logFC < 0 ~ "Down-regulated", 
     FDR<0.05 & logFC > 0 ~ "Up-regulated",
     TRUE ~ ""
-  )) %>%
-  mutate(feature = ifelse(feature %in% topgenes_symbols, as.character(feature), "")) %>%
+  )) |>
+  mutate(feature = ifelse(feature %in% topgenes_symbols, as.character(feature), "")) |>
   
   # Plot
   ggplot(aes(x = logFC, y = PValue, label=feature)) +
@@ -204,9 +204,9 @@ library(enrichplot)
 
 
 counts_gene_rank = 
-  counts_de %>%
-  symbol_to_entrez(.feature) %>%
-  filter(PValue   %>% is.na %>% `!`) %>%
+  counts_de |>
+  symbol_to_entrez(.feature) |>
+  filter(!is.na(PValue)) |>
   test_gene_rank(
     .entrez = entrez,
     .arrange_desc = logFC ,
@@ -215,13 +215,13 @@ counts_gene_rank =
   )
 
 
-counts_gene_rank %>% saveRDS("counts_gene_rank.rds")
+counts_gene_rank |> saveRDS("counts_gene_rank.rds")
 
 # Top GSEA
-counts_gene_rank %>% 
-  filter(gs_cat == "C2") %>%
-  unnest(test) %>%
-  slice(1:30) %>%
+counts_gene_rank |> 
+  filter(gs_cat == "C2") |>
+  unnest(test) |>
+  slice(1:30) |>
   mutate(plot = pmap(
     list(fit, ID, idx_for_plotting, p.adjust), 
     ~ enrichplot::gseaplot2(
@@ -230,25 +230,25 @@ counts_gene_rank %>%
       title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
       base_size = 6
     ) 
-  )) %>%
-  pull(plot)%>%
+  )) |>
+  pull(plot)|>
   wrap_plots()
 
 # Save top 100 by enrichmentScore for Vijay to analyse
-counts_gene_rank %>%
-  filter(gs_cat  == "C2" ) %>%
-  dplyr::select(-fit) %>%
-  unnest(test) %>%
+counts_gene_rank |>
+  filter(gs_cat  == "C2" ) |>
+  dplyr::select(-fit) |>
+  unnest(test) |>
   filter(p.adjust<0.05) |> 
   arrange(enrichmentScore |> abs() |> desc()) |> 
   slice(1:100) |> 
   write_csv("EGSEA_top_100_ordered_by_enrichmentScore.csv")
 
 # Save top 100 by adjusted p-value for Vijay to analyse
-counts_gene_rank %>%
-  filter(gs_cat  == "C2" ) %>%
-  dplyr::select(-fit) %>%
-  unnest(test) %>%
+counts_gene_rank |>
+  filter(gs_cat  == "C2" ) |>
+  dplyr::select(-fit) |>
+  unnest(test) |>
   filter(p.adjust<0.05) |> 
   arrange(p.adjust) |> 
   slice(1:100) |> 
@@ -256,8 +256,8 @@ counts_gene_rank %>%
 
 Toplibrary(EGSEA)
 counts_gene_enrichment = 
-  counts_de %>%
-  symbol_to_entrez(feature) %>%
+  counts_de |>
+  symbol_to_entrez(feature) |>
   test_gene_enrichment(
     ~0+type, 
     .entrez=entrez, 
@@ -266,17 +266,17 @@ counts_gene_enrichment =
     gene_collections = c("H", "C2", "C5")
   )
 
-counts_gene_enrichment %>% saveRDS("counts_gene_enrichment.rds")
+counts_gene_enrichment |> saveRDS("counts_gene_enrichment.rds")
 
 my_pathways = 
-  counts_gene_enrichment %>%
-  #filter(data_base == "c2") %>%
-  slice(1:30) %>%
+  counts_gene_enrichment |>
+  #filter(data_base == "c2") |>
+  slice(1:30) |>
   pull(pathway)
 
-counts_gene_rank %>%
-  mutate(test = map(test, ~ .x %>% filter(ID %in% my_pathways))) %>%
-  unnest(test) %>%
+counts_gene_rank |>
+  mutate(test = map(test, ~ .x |> filter(ID %in% my_pathways))) |>
+  unnest(test) |>
   mutate(plot = pmap(
     list(fit, ID, idx_for_plotting, p.adjust), 
     ~ enrichplot::gseaplot2(
@@ -285,8 +285,8 @@ counts_gene_rank %>%
       title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
       base_size = 6
     ) 
-  )) %>%
-  pull(plot)%>%
+  )) |>
+  pull(plot)|>
   wrap_plots()
 
 # Plot Vijay list
@@ -294,10 +294,10 @@ counts_gene_rank %>%
 numeric_list = c(210, 220, 224, 1, 48,  69 ,   99,  48, 106,   93, 7,  51 ,  46,71,  86, 367, 350, 521,   549, 179)
 
 p_numeric_list = 
-  counts_gene_rank %>%
-  filter(gs_cat == "C2") %>%
-  unnest(test) %>%
-  filter(idx_for_plotting %in% numeric_list) %>%
+  counts_gene_rank |>
+  filter(gs_cat == "C2") |>
+  unnest(test) |>
+  filter(idx_for_plotting %in% numeric_list) |>
   mutate(plot = pmap(
     list(fit, ID, idx_for_plotting, p.adjust), 
     ~ enrichplot::gseaplot2(
@@ -306,8 +306,8 @@ p_numeric_list =
       title = sprintf("%s \nadj pvalue %s", ..2, round(..4, 2)),
       base_size = 6
     ) 
-  )) %>%
-  pull(plot)%>%
+  )) |>
+  pull(plot)|>
   wrap_plots()
 
 ggsave(
@@ -323,15 +323,15 @@ ggsave(
 # Overall enrichment
 
 overall_buble_plot = 
-  counts_gene_rank %>%
-  filter(gs_cat == "C2") %>%
-  unnest(test) %>%
-  mutate(label = if_else(idx_for_plotting %in% numeric_list, ID %>% stringr::str_sub(0, 20), "")) %>%
-  filter(p.adjust < 0.05) %>%
+  counts_gene_rank |>
+  filter(gs_cat == "C2") |>
+  unnest(test) |>
+  mutate(label = if_else(idx_for_plotting %in% numeric_list, ID |> stringr::str_sub(0, 20), "")) |>
+  filter(p.adjust < 0.05) |>
   
   # Cut
-  arrange(p.adjust) %>%
-  slice(1:100) %>%
+  arrange(p.adjust) |>
+  slice(1:100) |>
   ggplot(aes(forcats::fct_reorder(ID, enrichmentScore), enrichmentScore, label=label )) +
   #geom_hline(yintercept = 0, color="#c8c8c8", linetype="dashed") +
   geom_point(aes(size=Count, color=p.adjust)) +
