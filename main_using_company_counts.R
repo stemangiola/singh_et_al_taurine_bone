@@ -5,6 +5,22 @@ library(tidybulk)
 library(tidyHeatmap)
 library(patchwork)
 library(future)
+library(stringr)
+
+
+# Save dataset for GEO
+read_csv("company_derived_normalised_counts.csv") |>
+  pivot_longer(cols = -Gene_Name, names_to = "sample_id", values_to = "count") |>
+  
+  # Add factor of interest
+  inner_join(
+    tibble(
+      sample_id = c("W1", "W2", "W3", "Ko1", "Ko2", "Ko3"),
+      type = c(rep("Wild_type", 3), rep("Knock_out", 3))
+    ),
+    by="sample_id"
+  ) |> 
+  write_csv("counts_scaled.csv")
 
 counts_scaled = 
   read_csv("company_derived_normalised_counts.csv") |>
@@ -320,7 +336,19 @@ ggsave(
   limitsize = FALSE
 )
 
+# AGING pathways
+counts_gene_rank |>
+  dplyr::filter(gs_cat  == "C2" ) |>
+  dplyr::select(-fit) |>
+  unnest(test) |>
+  dplyr::filter(p.adjust<0.05) |> 
+  arrange(p.adjust) |> 
+  dplyr::filter(ID |> tolower() |> str_detect("aging")) |> 
+  dplyr::select(ID)
+
 # Overall enrichment
+counts_gene_rank = readRDS("counts_gene_rank.rds")
+
 
 overall_buble_plot = 
   counts_gene_rank |>
@@ -363,3 +391,31 @@ ggsave(
 )
 
 
+# Gene enrichment for Mouse
+library(ensembldb)
+library(org.Mm.eg.db)
+library(AnnotationDbi)
+EnsDb.Mmusculus.v79
+
+counts_gene_rank_mouse = 
+  counts_de |> 
+  mutate(entrez =  mapIds(EnsDb.Mmusculus.v79,
+                          keys=.feature,
+                          column="ENTREZID",
+                          keytype="SYMBOL",
+                          multiVals="first")) |> 
+  tidySummarizedExperiment::filter(!is.na(entrez)) |> 
+  tidySummarizedExperiment::filter(!is.na(PValue)) |>
+  test_gene_rank(
+    .entrez = entrez,
+    .arrange_desc = logFC ,
+    species="Mus musculus",
+    gene_sets = c( "C2")
+  )
+
+counts_gene_rank_mouse |>
+  dplyr::filter(gs_cat  == "C2" ) |>
+  dplyr::select(-fit) |>
+  unnest(test) |>
+  dplyr::filter(p.adjust<0.05) |> 
+  arrange(p.adjust) |> dplyr::filter(ID |> tolower() |> str_detect("aging"))
