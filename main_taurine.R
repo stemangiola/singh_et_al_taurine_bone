@@ -250,7 +250,7 @@ counts_gene_rank |>
   pull(plot)|>
   wrap_plots()
 
-# Save top 100 by enrichmentScore for Vijay to analyse
+# Save top 100 by enrichmentScore to analyse
 counts_gene_rank |>
   filter(gs_cat  == "C2" ) |>
   dplyr::select(-fit) |>
@@ -260,7 +260,7 @@ counts_gene_rank |>
   slice(1:100) |> 
   write_csv("EGSEA_top_100_ordered_by_enrichmentScore.csv")
 
-# Save top 100 by adjusted p-value for Vijay to analyse
+# Save top 100 by adjusted p-value to analyse
 counts_gene_rank |>
   filter(gs_cat  == "C2" ) |>
   dplyr::select(-fit) |>
@@ -305,7 +305,7 @@ counts_gene_rank |>
   pull(plot)|>
   wrap_plots()
 
-# Plot Vijay list
+# Plot list
 
 numeric_list = c(210, 220, 224, 1, 48,  69 ,   99,  48, 106,   93, 7,  51 ,  46,71,  86, 367, 350, 521,   549, 179)
 
